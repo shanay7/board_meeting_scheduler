@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sanghvi Family · Board Scheduler</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #FDFCF9; font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif; }
+    button:focus { outline: none; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f0ead8; }
+    ::-webkit-scrollbar-thumb { background: #c8b99a; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback } = React;
+
+    // ── JSONBin Config ────────────────────────────────────────────────────
+    const BIN_ID  = "69e8490836566621a8db399c";
+    const API_KEY = "$2a$10$B/McEgKr1O3KgLjZMACPXedn4IUvj80hdl2dldKoI.XNmG6gNu0Va";
+    const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+
+    // ── Poonam (Full Moon) calculator ─────────────────────────────────────
+    function getPoonamDates(year, month) {
+      const knownFullMoon = new Date(Date.UTC(2025, 0, 13, 22, 27));
+      const synodic = 29.53058867;
+      const target  = new Date(Date.UTC(year, month, 1));
+      const diff    = (target - knownFullMoon) / (1000 * 60 * 60 * 24);
+      const cycles  = Math.round(diff / synodic);
+      const dates   = [];
+      for (let c = cycles - 1; c <= cycles + 2; c++) {
+        const fm = new Date(knownFullMoon.getTime() + c * synodic * 24 * 60 * 60 * 1000);
+        if (fm.getUTCFullYear() === year && fm.getUTCMonth() === month)
+          dates.push(fm.getUTCDate());
+      }
+      return dates;
+    }
+
+    // ── Constants ─────────────────────────────────────────────────────────
+    const MONTHS   = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    const DAY_S    = ["S","M","T","W","T","F","S"];
+    const DAY_FULL = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const PALETTE  = ["#c2410c","#0369a1","#15803d","#7e22ce","#b45309","#0f766e","#be123c","#1d4ed8","#65a30d","#9333ea","#b91c1c","#0284c7","#16a34a"];
+
+    function dateKey(y, m, d) { return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+    function getDays(y, m)    { return new Date(y, m+1, 0).getDate(); }
+    function getFirst(y, m)   { return new Date(y, m, 1).getDay(); }
+    function initials(name)   { return name.split(" ").map(w => w[0]).join("").slice(0,2).toUpperCase(); }
+
+    const today = new Date();
+
+    // ── App ───────────────────────────────────────────────────────────────
+    function App() {
+      const [screen,       setScreen]       = useState("home");
+      const [activeIdx,    setActiveIdx]    = useState(null);
+      const [partners,     setPartners]     = useState([]);
+      const [blocked,      setBlocked]      = useState({});
+      const [calY,         setCalY]         = useState(today.getFullYear());
+      const [calM,         setCalM]         = useState(today.getMonth());
+      const [sugY,         setSugY]         = useState(today.getFullYear());
+      const [sugM,         setSugM]         = useState(today.getMonth());
+      const [loading,      setLoading]      = useState(true);
+      const [saving,       setSaving]       = useState(false);
+      const [saveMsg,      setSaveMsg]      = useState("");
+      const [error,        setError]        = useState("");
+      const [newName,      setNewName]      = useState("");
+      const [addingMember, setAddingMember] = useState(false);
+
+      // Load
+      const load = useCallback(async () => {
+        setLoading(true); setError("");
+        try {
+          const res  = await fetch(`${BIN_URL}/latest`, { headers: { "X-Master-Key": API_KEY, "X-Bin-Meta": "false" } });
+          if (!res.ok) throw new Error();
+          const data = await res.json();
+          setPartners(data.partners || []);
+          const bd = {};
+          Object.entries(data.blockedDates || {}).forEach(([k, v]) => { bd[k] = Array.isArray(v) ? v : []; });
+          setBlocked(bd);
+        } catch { setError("Could not connect. Check your internet connection."); }
+        setLoading(false);
+      }, []);
+
+      useEffect(() => { load(); }, [load]);
+
+      // Save
+      const save = useCallback(async (p, b) => {
+        setSaving(true); setSaveMsg("");
+        try {
+          const res = await fetch(BIN_URL, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "X-Master-Key": API_KEY },
+            body: JSON.stringify({ partners: p, blockedDates: b })
+          });
+          if (!res.ok) throw new Error();
+          setSaveMsg("Saved ✓");
+          setTimeout(() => setSaveMsg(""), 2500);
+        } catch { setSaveMsg("⚠ Save failed"); }
+        setSaving(false);
+      }, []);
+
+      // Toggle
+      function toggle(day) {
+        const key = dateKey(calY, calM, day);
+        setBlocked(prev => {
+          const arr  = prev[key] ? [...prev[key]] : [];
+          const has  = arr.includes(activeIdx);
+          const next = has ? arr.filter(x => x !== activeIdx) : [...arr, activeIdx];
+          const upd  = { ...prev, [key]: next };
+          save(partners, upd);
+          return upd;
+        });
+      }
+
+      const isMyBlocked  = d => (blocked[dateKey(calY, calM, d)] || []).includes(activeIdx);
+      const conflictCnt  = d => (blocked[dateKey(calY, calM, d)] || []).length;
+      const myTotal      = () => Object.values(blocked).filter(a => a.includes(activeIdx)).length;
+      const hasDone      = i => Object.values(blocked).some(a => a.includes(i));
+      const N            = partners.length;
+
+      const poonamCal = useMemo(() => new Set(getPoonamDates(calY, calM)), [calY, calM]);
+      const poonamSug = useMemo(() => new Set(getPoonamDates(sugY, sugM)), [sugY, sugM]);
+
+      // Best dates — ALL must be free
+      const suggestions = useMemo(() => {
+        if (!N) return [];
+        return Array.from({ length: getDays(sugY, sugM) }, (_, i) => {
+          const d   = i + 1;
+          const key = dateKey(sugY, sugM, d);
+          const blk = (blocked[key] || []).length;
+          const dow = new Date(sugY, sugM, d).getDay();
+          return { d, blk, dow, isPoonam: poonamSug.has(d) };
+        }).filter(r => r.blk === 0);
+      }, [blocked, sugY, sugM, N, poonamSug]);
+
+      async function addMember() {
+        if (!newName.trim()) return;
+        const upd = [...partners, newName.trim()];
+        setPartners(upd); setNewName(""); setAddingMember(false);
+        await save(upd, blocked);
+      }
+
+      // Calendar cells
+      const first = getFirst(calY, calM);
+      const days  = getDays(calY, calM);
+      const cells = [...Array(first).fill(null), ...Array.from({length: days}, (_,i) => i+1)];
+      while (cells.length % 7) cells.push(null);
+
+      const submitted = partners.filter((_,i) => hasDone(i)).length;
+      const pending   = partners.filter((_,i) => !hasDone(i));
+
+      // Month nav helpers
+      function prevM(y, m, setY, setM) { m === 0 ? (setY(y-1), setM(11)) : setM(m-1); }
+      function nextM(y, m, setY, setM) { m === 11 ? (setY(y+1), setM(0)) : setM(m+1); }
+
+      // ── Styles ──────────────────────────────────────────────────────────
+      const card = {
+        background: "#fff", border: "1px solid #ede8df", borderRadius: 12,
+        padding: "14px 16px", display: "flex", alignItems: "center", gap: 14,
+        cursor: "pointer", width: "100%", textAlign: "left",
+        fontFamily: "inherit", transition: "all 0.15s",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+      };
+      const avatar = i => ({
+        width: 44, height: 44, borderRadius: "50%",
+        background: PALETTE[i % PALETTE.length], color: "#fff",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 14, fontWeight: "bold", flexShrink: 0, letterSpacing: 0.5,
+      });
+      const arrowBtn = {
+        background: "#fff", border: "1px solid #ddd8cf", color: "#7a6a58",
+        width: 36, height: 36, borderRadius: 8, cursor: "pointer",
+        fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "inherit",
+      };
+      const pill = (active, danger) => ({
+        padding: "7px 18px", borderRadius: 20, cursor: "pointer", fontFamily: "inherit",
+        fontSize: 12, letterSpacing: 1, textTransform: "uppercase",
+        border: `1px solid ${danger ? "#fca5a5" : active ? "#1a1612" : "#ddd8cf"}`,
+        background: danger ? "#fee2e2" : active ? "#1a1612" : "transparent",
+        color: danger ? "#dc2626" : active ? "#f0ead8" : "#7a6a58",
+      });
+
+      // ── Loading / Error ──────────────────────────────────────────────────
+      if (loading) return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, background: "#FDFCF9" }}>
+          <div style={{ fontSize: 40 }}>🌕</div>
+          <div style={{ fontSize: 13, color: "#b09a7a", letterSpacing: 3, textTransform: "uppercase" }}>Loading…</div>
+        </div>
+      );
+
+      if (error) return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16, background: "#FDFCF9" }}>
+          <div style={{ fontSize: 40 }}>⚠️</div>
+          <div style={{ fontSize: 14, color: "#c0392b", textAlign: "center", padding: "0 24px" }}>{error}</div>
+          <button onClick={load} style={pill(true)}>Retry</button>
+        </div>
+      );
+
+      return (
+        <div style={{ minHeight: "100vh", background: "#FDFCF9", color: "#1a1612" }}>
+
+          {/* TOP BAR */}
+          <div style={{ background: "#1a1612", color: "#f0ead8", padding: "0 20px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 54, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(0,0,0,0.2)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {screen !== "home" && (
+                <button onClick={() => { setScreen("home"); setActiveIdx(null); }}
+                  style={{ background: "none", border: "none", color: "#c8b99a", cursor: "pointer", fontSize: 22, padding: "0 8px 0 0", lineHeight: 1 }}>←</button>
+              )}
+              <div>
+                <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#c8b99a" }}>Sanghvi Family</div>
+                <div style={{ fontSize: 13, color: "#e8e0d0", letterSpacing: 1 }}>Board Scheduler</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {saveMsg && <span style={{ fontSize: 12, color: saveMsg.includes("✓") ? "#86efac" : "#fca5a5" }}>{saveMsg}</span>}
+              {saving  && <span style={{ fontSize: 12, color: "#c8b99a" }}>Saving…</span>}
+              {screen === "home" && <>
+                <button onClick={() => setScreen("suggest")} style={pill(false)}>Best Dates</button>
+                <button onClick={() => setScreen("admin")}   style={{ ...pill(false), border: "none", color: "#8a7a68", fontSize: 18 }}>⚙</button>
+              </>}
+            </div>
+          </div>
+
+          {/* ── HOME ──────────────────────────────────────────────────────── */}
+          {screen === "home" && (
+            <div style={{ maxWidth: 540, margin: "0 auto", padding: "32px 18px 80px" }}>
+              <div style={{ textAlign: "center", marginBottom: 32 }}>
+                <div style={{ fontSize: 12, letterSpacing: 4, textTransform: "uppercase", color: "#b09a7a", marginBottom: 10 }}>Welcome</div>
+                <h1 style={{ fontSize: 30, fontWeight: "normal", margin: "0 0 8px", color: "#1a1612" }}>Who are you?</h1>
+                <p style={{ color: "#8a7a66", margin: 0, fontSize: 15 }}>Select your name to mark your unavailable dates</p>
+              </div>
+
+              {/* Progress */}
+              <div style={{ background: "#fff", border: "1px solid #ede8df", borderRadius: 14, padding: "18px 20px", marginBottom: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                  <span style={{ fontSize: 14, color: "#5a4a38" }}>{submitted} of {N} submitted</span>
+                  <span style={{ fontSize: 14, color: N - submitted === 0 ? "#16a34a" : "#b09a7a" }}>
+                    {N - submitted === 0 ? "✓ All done!" : `${N - submitted} pending`}
+                  </span>
+                </div>
+                <div style={{ height: 7, background: "#f0ead8", borderRadius: 4 }}>
+                  <div style={{ width: `${N ? (submitted/N)*100 : 0}%`, height: "100%", background: "#c8a45a", borderRadius: 4, transition: "width 0.6s ease" }} />
+                </div>
+                {pending.length > 0 && (
+                  <div style={{ fontSize: 11, color: "#b09a7a", marginTop: 8, lineHeight: 1.5 }}>
+                    Waiting for: {pending.join(" · ")}
+                  </div>
+                )}
+              </div>
+
+              {/* Partner list */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {partners.map((name, i) => {
+                  const done  = hasDone(i);
+                  const count = Object.values(blocked).filter(a => a.includes(i)).length;
+                  return (
+                    <button key={i} style={card}
+                      onClick={() => { setActiveIdx(i); setScreen("calendar"); }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = PALETTE[i % PALETTE.length]; e.currentTarget.style.boxShadow = "0 3px 14px rgba(0,0,0,0.09)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = "#ede8df"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)"; }}
+                    >
+                      <div style={avatar(i)}>{initials(name)}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 16, color: "#1a1612", marginBottom: 2 }}>{name}</div>
+                        <div style={{ fontSize: 12, color: done ? "#c8a45a" : "#c0b8a8" }}>
+                          {done ? `${count} date${count !== 1 ? "s" : ""} marked busy` : "Tap to add your availability"}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 20, color: done ? "#16a34a" : "#d8d0c4" }}>{done ? "✓" : "›"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Add member */}
+              {addingMember ? (
+                <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+                  <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") addMember(); if (e.key === "Escape") setAddingMember(false); }}
+                    placeholder="Full name…"
+                    style={{ flex: 1, border: "1px solid #c8b99a", borderRadius: 10, padding: "11px 14px", fontSize: 15, fontFamily: "inherit", outline: "none", background: "#fff", color: "#1a1612" }}
+                  />
+                  <button onClick={addMember} style={{ ...pill(true), borderRadius: 10, whiteSpace: "nowrap" }}>Add</button>
+                  <button onClick={() => setAddingMember(false)} style={{ ...pill(false), borderRadius: 10 }}>✕</button>
+                </div>
+              ) : (
+                <button onClick={() => setAddingMember(true)} style={{ marginTop: 14, width: "100%", background: "transparent", border: "1px dashed #c8b99a", borderRadius: 12, padding: "13px", color: "#b09a7a", cursor: "pointer", fontSize: 13, letterSpacing: 1, fontFamily: "inherit" }}>
+                  + Add New Member
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── CALENDAR ──────────────────────────────────────────────────── */}
+          {screen === "calendar" && activeIdx !== null && (
+            <div style={{ maxWidth: 480, margin: "0 auto", padding: "24px 16px 80px" }}>
+              {/* Who card */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, padding: "13px 16px", background: "#fff", border: "1px solid #ede8df", borderRadius: 12 }}>
+                <div style={avatar(activeIdx)}>{initials(partners[activeIdx] || "")}</div>
+                <div>
+                  <div style={{ fontSize: 17, color: "#1a1612" }}>{partners[activeIdx]}</div>
+                  <div style={{ fontSize: 12, color: "#b09a7a", marginTop: 1 }}>
+                    Tap dates you <strong>cannot</strong> attend
+                    {myTotal() > 0 && <span style={{ color: "#c8a45a" }}> · {myTotal()} marked</span>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Month nav */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <button onClick={() => prevM(calY, calM, setCalY, setCalM)} style={arrowBtn}>‹</button>
+                <span style={{ fontSize: 18, color: "#1a1612" }}>{MONTHS[calM]} {calY}</span>
+                <button onClick={() => nextM(calY, calM, setCalY, setCalM)} style={arrowBtn}>›</button>
+              </div>
+
+              {/* Day headers */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", marginBottom: 4 }}>
+                {DAY_S.map((d,i) => (
+                  <div key={i} style={{ textAlign: "center", fontSize: 11, color: "#b0a090", padding: "3px 0", letterSpacing: 1 }}>{d}</div>
+                ))}
+              </div>
+
+              {/* Grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 }}>
+                {cells.map((day, i) => {
+                  if (!day) return <div key={i} />;
+                  const mine      = isMyBlocked(day);
+                  const cnt       = conflictCnt(day);
+                  const isPoonam  = poonamCal.has(day);
+                  const isToday   = calY === today.getFullYear() && calM === today.getMonth() && day === today.getDate();
+                  const color     = PALETTE[activeIdx % PALETTE.length];
+                  return (
+                    <button key={day} onClick={() => toggle(day)} style={{
+                      background: mine ? color : "#fff",
+                      border: `1.5px solid ${mine ? color : isToday ? "#c8a45a" : "#ede8df"}`,
+                      borderRadius: 8, padding: "7px 2px 6px",
+                      cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                      transition: "all 0.12s", minHeight: 56, position: "relative",
+                    }}>
+                      {isPoonam && <span style={{ position: "absolute", top: 2, right: 3, fontSize: 9, lineHeight: 1 }}>🌕</span>}
+                      <span style={{ fontSize: 15, color: mine ? "#fff" : isToday ? "#c8a45a" : "#1a1612", lineHeight: 1, fontWeight: isToday ? "bold" : "normal" }}>{day}</span>
+                      {!mine && cnt > 0 && (
+                        <span style={{ fontSize: 9, background: "#fee2e2", color: "#dc2626", borderRadius: 3, padding: "1px 4px", lineHeight: 1.4 }}>{cnt}</span>
+                      )}
+                      {mine && <span style={{ fontSize: 8, color: "rgba(255,255,255,0.8)", lineHeight: 1 }}>busy</span>}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Legend */}
+              <div style={{ marginTop: 14, display: "flex", gap: 16, fontSize: 11, color: "#b09a7a", alignItems: "center" }}>
+                <span>🌕 Poonam</span>
+                <span style={{ background: "#fee2e2", color: "#dc2626", borderRadius: 3, padding: "1px 6px" }}>n</span>
+                <span>= others marked busy</span>
+              </div>
+
+              <button onClick={() => setScreen("home")} style={{
+                width: "100%", marginTop: 24, background: "#1a1612", color: "#f0ead8",
+                border: "none", borderRadius: 12, padding: "15px", fontSize: 13,
+                cursor: "pointer", fontFamily: "inherit", letterSpacing: 2, textTransform: "uppercase",
+              }}>
+                {saving ? "Saving…" : "Done · Back to Home"}
+              </button>
+            </div>
+          )}
+
+          {/* ── BEST DATES ────────────────────────────────────────────────── */}
+          {screen === "suggest" && (
+            <div style={{ maxWidth: 540, margin: "0 auto", padding: "32px 18px 80px" }}>
+              <h2 style={{ fontSize: 26, fontWeight: "normal", margin: "0 0 6px" }}>Best Meeting Dates</h2>
+              <p style={{ color: "#8a7a66", fontSize: 14, margin: "0 0 24px", lineHeight: 1.6 }}>
+                Only dates where <strong>all {N} members are free</strong> are shown.
+              </p>
+
+              {/* Month selector */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, background: "#fff", border: "1px solid #ede8df", borderRadius: 12, padding: "12px 18px" }}>
+                <button onClick={() => prevM(sugY, sugM, setSugY, setSugM)} style={arrowBtn}>‹</button>
+                <span style={{ fontSize: 17, color: "#1a1612" }}>{MONTHS[sugM]} {sugY}</span>
+                <button onClick={() => nextM(sugY, sugM, setSugY, setSugM)} style={arrowBtn}>›</button>
+              </div>
+
+              {/* Pending warning */}
+              {pending.length > 0 && (
+                <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: 10, padding: "13px 16px", marginBottom: 18, fontSize: 13, color: "#92400e", lineHeight: 1.6 }}>
+                  ⏳ <strong>{pending.length} member{pending.length > 1 ? "s" : ""}</strong> haven't submitted yet — results may be incomplete.<br/>
+                  <span style={{ fontSize: 12, color: "#b45309" }}>{pending.slice(0,5).join(", ")}{pending.length > 5 ? ` +${pending.length-5} more` : ""}</span>
+                </div>
+              )}
+
+              {suggestions.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "52px 20px", background: "#fff", borderRadius: 14, border: "1px solid #ede8df" }}>
+                  <div style={{ fontSize: 44, marginBottom: 14 }}>📭</div>
+                  <div style={{ fontSize: 17, color: "#5a4a38", marginBottom: 8 }}>No fully free dates in {MONTHS[sugM]}.</div>
+                  <div style={{ fontSize: 13, color: "#b09a7a" }}>Try a different month, or ask members to review their blocks.</div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {suggestions.map(({ d, dow, isPoonam }, idx) => (
+                    <div key={d} style={{
+                      background: "#fff",
+                      border: `1px solid ${idx === 0 ? "#c8a45a" : "#ede8df"}`,
+                      borderRadius: 14, padding: "18px 22px",
+                      display: "flex", alignItems: "center", gap: 18,
+                      boxShadow: idx === 0 ? "0 4px 20px rgba(200,164,90,0.18)" : "0 1px 4px rgba(0,0,0,0.04)",
+                    }}>
+                      <div style={{ textAlign: "center", minWidth: 54 }}>
+                        <div style={{ fontSize: 11, color: "#b09a7a", textTransform: "uppercase", letterSpacing: 1 }}>{DAY_FULL[dow]}</div>
+                        <div style={{ fontSize: 32, color: "#1a1612", lineHeight: 1.1, fontWeight: "normal" }}>{d}</div>
+                        <div style={{ fontSize: 11, color: "#b09a7a" }}>{MONTHS[sugM].slice(0,3)} {sugY}</div>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                          {idx === 0 && <span style={{ background: "#c8a45a", color: "#fff", fontSize: 10, padding: "3px 10px", borderRadius: 4, letterSpacing: 1, textTransform: "uppercase" }}>★ Top Pick</span>}
+                          {isPoonam && <span style={{ fontSize: 13 }}>🌕 Poonam</span>}
+                        </div>
+                        <div style={{ fontSize: 15, color: "#16a34a" }}>All {N} members available ✓</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── ADMIN ─────────────────────────────────────────────────────── */}
+          {screen === "admin" && (
+            <div style={{ maxWidth: 540, margin: "0 auto", padding: "32px 18px 80px" }}>
+              <h2 style={{ fontSize: 24, fontWeight: "normal", margin: "0 0 4px" }}>Admin Overview</h2>
+              <p style={{ color: "#8a7a66", fontSize: 14, margin: "0 0 24px" }}>Track who has submitted their availability.</p>
+
+              <div style={{ background: "#fff", border: "1px solid #ede8df", borderRadius: 14, padding: "18px 20px", marginBottom: 20, display: "flex", justifyContent: "space-around" }}>
+                {[["Total", N, "#1a1612"], ["Submitted", submitted, "#16a34a"], ["Pending", N - submitted, N - submitted === 0 ? "#16a34a" : "#c8a45a"]].map(([label, val, color]) => (
+                  <div key={label} style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 28, color, fontWeight: "normal" }}>{val}</div>
+                    <div style={{ fontSize: 11, color: "#b09a7a", letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {partners.map((name, i) => {
+                  const count = Object.values(blocked).filter(a => a.includes(i)).length;
+                  const done  = count > 0;
+                  return (
+                    <div key={i} style={{ background: "#fff", border: "1px solid #ede8df", borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={avatar(i)}>{initials(name)}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 15, color: "#1a1612" }}>{name}</div>
+                        <div style={{ fontSize: 12, color: done ? "#c8a45a" : "#c0b8a8", marginTop: 2 }}>
+                          {done ? `${count} day${count !== 1 ? "s" : ""} marked busy` : "Not submitted yet"}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 20, color: done ? "#16a34a" : "#d8d0c4" }}>{done ? "✓" : "○"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={load} style={{ marginTop: 20, ...pill(false), width: "100%", borderRadius: 10, padding: "12px" }}>
+                ↻ Refresh Data
+              </button>
+            </div>
+          )}
+
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
