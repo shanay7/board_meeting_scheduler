@@ -152,9 +152,12 @@
         await saveData(upd,blocked,submitted);
       }
 
-      const first=getFirst(calY,calM), days=getDays(calY,calM);
-      const cells=[...Array(first).fill(null),...Array.from({length:days},(_,i)=>i+1)];
-      while(cells.length%7) cells.push(null);
+      const cells = useMemo(() => {
+        const f=getFirst(calY,calM), d=getDays(calY,calM);
+        const c=[...Array(f).fill(null),...Array.from({length:d},(_,i)=>i+1)];
+        while(c.length%7) c.push(null);
+        return c.map((day,i) => ({ day, key: day ? `day-${day}` : `empty-${i}` }));
+      }, [calY,calM]);
 
       const submittedCount = partners.filter((_,i)=>hasDone(i)).length;
       const pending        = partners.filter((_,i)=>!hasDone(i));
@@ -286,14 +289,14 @@
                 {DAY_S.map((d,i)=><div key={i} style={{textAlign:"center",fontSize:11,color:"#b0a090",padding:"3px 0",letterSpacing:1}}>{d}</div>)}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
-                {cells.map((day,i)=>{
-                  if(!day) return <div key={i}/>;
+                {cells.map(({day, key})=>{
+                  if(!day) return <div key={key}/>;
                   const mine=isMyBlocked(day), cnt=conflictCnt(day);
                   const isPoonam=poonamCal.includes(day);
                   const isToday=calY===today.getFullYear()&&calM===today.getMonth()&&day===today.getDate();
                   const color=PALETTE[activeIdx%PALETTE.length];
                   return(
-                    <button key={day} onClick={()=>toggle(day)} style={{background:mine?color:"#fff",border:`1.5px solid ${mine?color:isToday?"#c8a45a":"#ede8df"}`,borderRadius:8,padding:"7px 2px 6px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,transition:"all 0.12s",minHeight:56,position:"relative"}}>
+                    <button key={key} onClick={()=>toggle(day)} style={{background:mine?color:"#fff",border:`1.5px solid ${mine?color:isToday?"#c8a45a":"#ede8df"}`,borderRadius:8,padding:"7px 2px 6px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,transition:"all 0.12s",minHeight:56,position:"relative"}}>
                       {isPoonam&&<span style={{position:"absolute",top:2,right:3,fontSize:9,lineHeight:1}}>🌕</span>}
                       <span style={{fontSize:15,color:mine?"#fff":isToday?"#c8a45a":"#1a1612",lineHeight:1,fontWeight:isToday?"bold":"normal"}}>{day}</span>
                       {!mine&&cnt>0&&<span style={{fontSize:9,background:"#fee2e2",color:"#dc2626",borderRadius:3,padding:"1px 4px",lineHeight:1.4}}>{cnt}</span>}
