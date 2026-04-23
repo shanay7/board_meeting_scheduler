@@ -30,17 +30,19 @@
     // 2025: Jan13, Feb12, Mar14, Apr12, May12, Jun11, Jul10, Aug9, Sep7, Oct7, Nov5, Dec4
     // 2026: Jan3,  Feb1,  Mar3,  Apr2,  May1,  Jun29, Jul29, Aug28, Sep26, Oct26, Nov24, Dec23
     // 2027: Jan22, Feb20, Mar22, Apr20, May20, Jun18, Jul18, Aug16, Sep15, Oct14, Nov13, Dec13
+    // Arrays to support months with 2 Poonam days (e.g. Adhik Maas)
+    // 2026 has 13 Purnimas — May has TWO: May 1 (regular) + May 31 (Adhika Jyeshtha)
     const POONAM = {
-      "2025-01":13,"2025-02":12,"2025-03":14,"2025-04":12,"2025-05":12,"2025-06":11,
-      "2025-07":10,"2025-08":9, "2025-09":7, "2025-10":7, "2025-11":5, "2025-12":4,
-      "2026-01":3, "2026-02":1, "2026-03":3, "2026-04":2, "2026-05":1, "2026-06":29,
-      "2026-07":29,"2026-08":28,"2026-09":26,"2026-10":26,"2026-11":24,"2026-12":23,
-      "2027-01":22,"2027-02":20,"2027-03":22,"2027-04":20,"2027-05":20,"2027-06":18,
-      "2027-07":18,"2027-08":16,"2027-09":15,"2027-10":14,"2027-11":13,"2027-12":13,
+      "2025-01":[13],"2025-02":[12],"2025-03":[14],"2025-04":[12],"2025-05":[12],"2025-06":[11],
+      "2025-07":[10],"2025-08":[9], "2025-09":[7], "2025-10":[7], "2025-11":[5], "2025-12":[4],
+      "2026-01":[3], "2026-02":[1], "2026-03":[3], "2026-04":[2], "2026-05":[1,31],"2026-06":[29],
+      "2026-07":[29],"2026-08":[28],"2026-09":[26],"2026-10":[26],"2026-11":[24],"2026-12":[23],
+      "2027-01":[22],"2027-02":[20],"2027-03":[22],"2027-04":[20],"2027-05":[20],"2027-06":[18],
+      "2027-07":[18],"2027-08":[16],"2027-09":[15],"2027-10":[14],"2027-11":[13],"2027-12":[13],
     };
-    function poonamDay(y, m) {
+    function poonamDays(y, m) {
       const key = `${y}-${String(m+1).padStart(2,"0")}`;
-      return POONAM[key] || null;
+      return POONAM[key] || [];
     }
 
     const MONTHS   = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -130,8 +132,8 @@
       const hasDone     = i => submitted[i]===true;
       const N = partners.length;
 
-      const poonamCal = useMemo(()=>poonamDay(calY,calM),[calY,calM]);
-      const poonamSug = useMemo(()=>poonamDay(sugY,sugM),[sugY,sugM]);
+      const poonamCal = useMemo(()=>poonamDays(calY,calM),[calY,calM]);
+      const poonamSug = useMemo(()=>poonamDays(sugY,sugM),[sugY,sugM]);
 
       const suggestions = useMemo(()=>{
         if(!N) return [];
@@ -139,7 +141,7 @@
           const d=i+1, key=dateKey(sugY,sugM,d);
           const blk=(blocked[key]||[]).length;
           const dow=new Date(sugY,sugM,d).getDay();
-          return {d,blk,dow,isPoonam:d===poonamSug};
+          return {d,blk,dow,isPoonam:poonamSug.includes(d)};
         }).filter(r=>r.blk===0);
       },[blocked,sugY,sugM,N,poonamSug]);
 
@@ -287,7 +289,7 @@
                 {cells.map((day,i)=>{
                   if(!day) return <div key={i}/>;
                   const mine=isMyBlocked(day), cnt=conflictCnt(day);
-                  const isPoonam=day===poonamCal;
+                  const isPoonam=poonamCal.includes(day);
                   const isToday=calY===today.getFullYear()&&calM===today.getMonth()&&day===today.getDate();
                   const color=PALETTE[activeIdx%PALETTE.length];
                   return(
